@@ -8,6 +8,7 @@ import pickle
 from bs4 import BeautifulSoup
 from urllib.request import urlopen
 import pygeoip
+import csv
 NOT_FOUND = -1
 
 
@@ -16,17 +17,21 @@ def ProcessCSV(FileName):
     Reads a CSV File, and converts into list, with label being integer
     """
     Train_URLs = []
-    for line in open("URL.txt"):
+    for line in open(FileName):
         line = line.split(',')
         line[1] = int(line[1])
         Train_URLs.append(line)
     return Train_URLs
 
-def MakeTokens(URL):
-    Tokens = re.split('\W+', URL)
-    if 'com' in Tokens:
-        Tokens.remove('com')
-    return Tokens
+def MakeTokens(String):
+    print("Flag")
+    print(String)
+    if String != '':
+        Tokens = re.split('\W+', String)
+        if 'com' in Tokens:
+            Tokens.remove('com')
+        return Tokens
+    return ''
 
 def LexicographicalFeatures(URL):
     if URL == '':
@@ -34,9 +39,9 @@ def LexicographicalFeatures(URL):
 
     NumberOfLevels = URL.count('.')
 
-    URL = MakeTokens(URL) #Makes tokens
+    URL = MakeTokens(URL[0]) #Makes tokens
     URL = list(filter(None, URL)) #Removes empty strings
-    LongestToken = max(URL, key = len)
+    LongestToken = len(max(URL, key = len))
     TotalLength = sum(len(Token) for Token in URL)
     NumberOfTokens = len(URL)
 
@@ -70,8 +75,12 @@ def tf_idf_predict(Vectorizer, URL, FileName):
     filename from which the Trained Model needs to be loaded
     """
     LogisticRegression = pickle.load(open(FileName, 'rb'))
-    URL = Vectorizer.transform(URL)
+    print("tfidfFlag")
+    print(URL)
+    URL = Vectorizer.transform([URL[0]])
     Y_Predict = LogisticRegression.predict(URL)
+    if Y_Predict == 1:
+        print(URL)
     return Y_Predict #Returns an array of the predicted label of URL
 
 
@@ -80,7 +89,10 @@ def AlexaRanking(URL):
     Fix countries of non-malware
     """
     Website_Country = []
-    soup = BeautifulSoup(urlopen("http://data.alexa.com/data?cli=10&dat=snbamz&url="+URL[0]).read(), "lxml")
+    try:
+        soup = BeautifulSoup(urlopen("http://data.alexa.com/data?cli=10&dat=snbamz&url="+URL[0]).read(), "lxml")
+    except:
+        AlexaRanking(URL)
     print(URL[1] , ":", URL[0], end = ' ')
     try:
         Website_Country.append(soup.popularity['text'])
@@ -129,47 +141,70 @@ def getASNumber(Host):
         return ASN
     except:
         return NOT_FOUND
-def Count_Function():
 
 
 def MakeFeatures(URL, tf_idf_Vectorizer, tf_idf_FileName):
-    URL_Tokens = MakeTokens(URL[:]) #Tokens of the URL
+    URL_Tokens = MakeTokens(URL[0]) #Tokens of the URL
     print(URL)
     URL_Details = urlparse(URL[0]) # Makes the object of a URL to access different info
     Host = URL_Details.netloc
     Path = URL_Details.path
 
     Features = []
-    Features.extend(LexicographicalFeatures(URL))
+    Label = []
+    Features.append(URL[1])
+    Features.extend(LexicographicalFeatures(URL[:]))
+    print('================Lexicographic========================================================')
     #Avg length of tokens, Longest Token, Number of Levels, Number of Tokens
     Features.extend([len(MakeTokens(Path)), len(Path), len(Host)])
+    print('=================Path and host=======================================================')
     #Number of tokens in path, length of path, length of Host
-    Features.extend(AlexaRanking(URL))
+    Features.extend(AlexaRanking(URL[:]))
+    print('================Alexa Ranking========================================================')
     #Rank of URL, Rank of Country hosting URL
-    Features.extend(SecuritySensitive(URL_Tokens))
+    Features.append(SecuritySensitive(URL_Tokens))
+    print('================Security Sensitive===================================================')
     #Integer value if the tokens contain words indicative of malware
-    Features.extend(ExecutableURL(URL_Tokens))
+    Features.append(ExecutableURL(URL_Tokens))
+    print('================Executable URL=======================================================')
     #Binary if '.exe' exists in tokens or not
-    Features.extend(IP_URL(URL_Tokens))
+    Features.append(IP_URL(URL_Tokens))
+    print('================IP_ URL==============================================================')
     #Binary if url contains IP Address
-    Features.extend(getASNumber(Host))
+    Features.append(getASNumber(Host))
     #Autonomous system number of Website
-    Features.extend(tf_idf_predict(tf_idf_Vectorizer, [URL], tf_idf_FileName))
+    print('===============ASNumber==============================================================')
+    Features.extend(tf_idf_predict(tf_idf_Vectorizer, URL, tf_idf_FileName))
     #Predicted label for the URL using tf_idf and logistic regression
-    return Features
+    print('===============tfidf=================================================================')
+
+    print('===============return================================================================')
+    return Features, Label
 
 
 if __name__ == "__main__":
 
     Test_URLs = ['wikipedia.com']
-    Train_URLs = ProcessCSV("URL.txt")
+    Train_URLs = ProcessCSV("PreppedURLs.csv")
     Features = {}
-    tf_idf_Vectorizer, tf_idf_FileName = tf_idf_train(ProcessCSV("URL.txt"))
+    Labels = []
+    tf_idf_Vectorizer, tf_idf_FileName = tf_idf_train(ProcessCSV("PreppedURLs.csv"))
     #Trains the tf_idf and logistic regression model using the current text file
-    for URL in Train_URLs[100:150]:
-          print(URL)
-          Features[URL] = MakeFeatures(URL, tf_idf_Vectorizer, tf_idf_FileName)
-          print(Features)
+    for URL in Train_URLs:
+          #print(URL)
+          Features[URL[0]], Label = tuple(MakeFeatures(URL[:], tf_idf_Vectorizer, tf_idf_FileName))
+    #print(pd.DataFrame.from_dict(Features))
+   # print(Label)
+    with open('Features.csv', 'w') as Features_File:
+        Features_File_CSV = csv.writer(Features_File)
+        for key, value in Features.items():
+            Labels.append(value[0])
+            Features_File_CSV.writerow(value[1:])
+
+
+    with open('Labels.csv', 'w') as Labels_File:
+        Labels_File_CSV = csv.writer(Labels_File)
+        Labels_File_CSV.writerow(Labels)
     """
         URL_Details = urlparse(URL[0])
         Host = URL_Details.netloc
